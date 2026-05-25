@@ -92,3 +92,9 @@ body {
 @keyframes recRing {
   75%, 100% { transform: scale(2.8); opacity: 0; }
 }
+
+/* LIVE FEED green square blink */
+@keyframes livePulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px #C8FF3D, 0 0 12px rgba(200,255,61,0.5); }
+  50%       { opacity: 0.25; box-shadow: 0 0 2px rgba(200,255,61,0.2); }
+}

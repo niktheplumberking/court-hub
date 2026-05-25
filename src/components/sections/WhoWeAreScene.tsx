@@ -1,201 +1,245 @@
 "use client";
 
-import { Component, Suspense, useRef, useMemo, type ReactNode } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { useGLTF } from "@react-three/drei";
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { useGLTF, useTexture } from "@react-three/drei";
 import * as THREE from "three";
 
-// ─── Laser emitter ring positions ────────────────────────────────────────────
-const LASERS = Array.from({ length: 38 }, (_, i) => {
-  const a = (i / 38) * Math.PI * 2;
-  const r = [1.55, 1.0, 0.42][i % 3];
-  return { x: Math.cos(a) * r, z: Math.sin(a) * r, ph: i * 0.619 };
-});
+const SLIDES = [
+  "/images/who-we-are/slide-rackets.png",
+  "/images/who-we-are/slide-brands.png",
+  "/images/who-we-are/slide-pillars.png",
+];
 
-// ─── Platform — Blender GLB ───────────────────────────────────────────────────
-function Platform() {
-  const { scene } = useGLTF("/models/who-we-are-platform.glb");
+const CYCLE_S = 5.4;
+const FADE_S = 0.7;
 
-  const cloned = useMemo(() => {
-    const s = scene.clone(true);
-    s.traverse((c) => {
-      if (!(c instanceof THREE.Mesh)) return;
-      const m = c.material as THREE.MeshStandardMaterial;
-      if (!m || m.type !== "MeshStandardMaterial") return;
-      if ((m.emissiveIntensity ?? 0) > 0.1) return;
-      c.material = new THREE.MeshPhongMaterial({
-        color: m.color?.clone() ?? new THREE.Color(0.12, 0.12, 0.12),
-        specular: new THREE.Color(0.85, 0.88, 1.0),
-        shininess: m.roughness != null ? Math.round((1 - m.roughness) * 120) + 20 : 80,
-        reflectivity: 0.9,
-      });
-    });
-    return s;
-  }, [scene]);
+// Target world-space radius of the metal base disc (in three.js units).
+// +35% from previous 0.32
+const BASE_RADIUS = 0.43;
 
-  return (
-    <group position={[0, -0.05, 0]} rotation={[0, 0.35, 0]} scale={[3.1, 1.5, 3.1]}>
-      <primitive object={cloned} />
-    </group>
-  );
-}
+// ─── Hologram shader ─────────────────────────────────────────────────────────
+// Treats the source PNG's luminance as the alpha mask so the slide's black
+// render background disappears and only the subject shows. Adds scan lines,
+// flicker, lime tint, and edge falloff so it reads as projected light.
+const holoVS = /* glsl */ `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
 
-// ─── Vertical laser columns ───────────────────────────────────────────────────
-function Lasers({ pr }: { pr: React.MutableRefObject<number> }) {
-  const ref = useRef<THREE.InstancedMesh>(null);
-  const dummy = useMemo(() => new THREE.Object3D(), []);
-  const mat = useMemo(
-    () =>
-      new THREE.MeshBasicMaterial({
-        color: "#C8FF3D",
-        transparent: true,
-        opacity: 0.72,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        toneMapped: false,
-        side: THREE.DoubleSide,
-      }),
-    [],
-  );
-  const geo = useMemo(
-    () => new THREE.CylinderGeometry(0.013, 0.03, 1, 5, 1, true),
-    [],
-  );
+const holoFS = /* glsl */ `
+  precision highp float;
+  uniform sampler2D uMap;
+  uniform float uOpacity;
+  uniform float uTime;
+  uniform vec3 uTint;
+  varying vec2 vUv;
 
-  useFrame(({ clock }) => {
-    const m = ref.current;
-    if (!m) return;
-    const t = clock.elapsedTime;
-    // Flash white briefly during scroll transitions
-    const p = pr.current;
-    const flash =
-      Math.sin(Math.max(0, Math.min(1, (p - 0.28) / 0.08)) * Math.PI) * 0.7 +
-      Math.sin(Math.max(0, Math.min(1, (p - 0.62) / 0.08)) * Math.PI) * 0.7;
-    mat.color.setStyle(flash > 0.6 ? "#ffffff" : "#C8FF3D");
-    mat.opacity = 0.55 + flash * 0.45;
+  void main() {
+    vec4 tex = texture2D(uMap, vUv);
+    float lum = max(max(tex.r, tex.g), tex.b);
+    float mask = smoothstep(0.04, 0.18, lum) * tex.a;
+    if (mask < 0.01) discard;
 
-    for (let i = 0; i < LASERS.length; i++) {
-      const e = LASERS[i];
-      const flicker = 0.76 + 0.24 * Math.sin(t * 8.1 + e.ph);
-      const h = 5.8 * flicker;
-      dummy.position.set(e.x, 0.18 + h * 0.5, e.z);
-      dummy.scale.set(1, h, 1);
-      dummy.updateMatrix();
-      m.setMatrixAt(i, dummy.matrix);
-    }
-    m.instanceMatrix.needsUpdate = true;
-  });
+    vec3 col = mix(tex.rgb, tex.rgb * uTint, 0.32);
+    float scan = 0.85 + 0.15 * sin(vUv.y * 320.0 + uTime * 2.1);
+    col *= scan;
+    float flick = 0.94 + 0.06 * sin(uTime * 13.0);
+    col *= flick;
 
-  return (
-    <instancedMesh
-      ref={ref}
-      args={[geo, mat, LASERS.length]}
-      frustumCulled={false}
-    />
-  );
-}
+    float edge = smoothstep(0.0, 0.18, vUv.x) *
+                 smoothstep(1.0, 0.82, vUv.x) *
+                 smoothstep(0.0, 0.14, vUv.y) *
+                 smoothstep(1.0, 0.86, vUv.y);
 
-// ─── Wireframe padel racket ───────────────────────────────────────────────────
-function Racket({ showRef }: { showRef: React.MutableRefObject<boolean> }) {
-  const ref = useRef<THREE.Group>(null);
+    gl_FragColor = vec4(col, mask * uOpacity * edge);
+  }
+`;
 
-  const { headGeo, stringsGeo } = useMemo(() => {
-    const hPts = Array.from({ length: 81 }, (_, i) => {
-      const a = (i / 80) * Math.PI * 2;
-      return new THREE.Vector3(Math.cos(a) * 0.53, Math.sin(a) * 0.6 + 0.09, 0);
-    });
-    const sPts: THREE.Vector3[] = [];
-    for (let i = -6; i <= 6; i++) {
-      sPts.push(
-        new THREE.Vector3(i * 0.075, -0.44, 0),
-        new THREE.Vector3(i * 0.075, 0.66, 0),
-      );
-    }
-    for (let i = -5; i <= 5; i++) {
-      const y = i * 0.096 + 0.09;
-      sPts.push(new THREE.Vector3(-0.5, y, 0), new THREE.Vector3(0.5, y, 0));
-    }
-    sPts.push(
-      new THREE.Vector3(-0.17, -0.46, 0), new THREE.Vector3(0, -0.68, 0),
-      new THREE.Vector3(0.17, -0.46, 0), new THREE.Vector3(0, -0.68, 0),
-      new THREE.Vector3(0, -0.68, 0),    new THREE.Vector3(0, -1.1, 0),
-    );
-    return {
-      headGeo: new THREE.BufferGeometry().setFromPoints(hPts),
-      stringsGeo: new THREE.BufferGeometry().setFromPoints(sPts),
+// ─── Platform ────────────────────────────────────────────────────────────────
+// Scales the imported GLB so the metal disc has radius == BASE_RADIUS, then
+// reports the world-space top-Y of the lights structure so we can park the
+// hologram billboard cleanly above it.
+function usePlatformLayout() {
+  const { scene } = useGLTF("/models/hologram-platform.glb");
+
+  return useMemo(() => {
+    const root = scene.clone(true);
+
+    const found: { metal: THREE.Mesh | null; lights: THREE.Mesh | null } = {
+      metal: null,
+      lights: null,
     };
-  }, []);
+    root.traverse((c) => {
+      if (!(c instanceof THREE.Mesh)) return;
+      if (c.name.includes("Metal-part")) found.metal = c;
+      if (c.name.includes("Hologram-lights")) found.lights = c;
+    });
+    const metal = found.metal;
+    const lights = found.lights;
 
-  const mat = useMemo(
+    const metalBox = new THREE.Box3().setFromObject(metal ?? root);
+    const metalSize = metalBox.getSize(new THREE.Vector3());
+    const metalRadius = Math.max(metalSize.x, metalSize.z) * 0.5 || 1;
+    const scale = BASE_RADIUS / metalRadius;
+
+    // Lift the lights mesh so its base aligns with the metal disc top
+    // (the source asset's light cone extends below the platform — clip it)
+    if (lights && metal) {
+      const lBox = new THREE.Box3().setFromObject(lights);
+      const mBox = new THREE.Box3().setFromObject(metal);
+      lights.position.y += mBox.max.y - lBox.min.y - 0.02;
+    }
+
+    // Brighten + warm-tint the hologram cone material
+    if (lights) {
+      const m = (lights as THREE.Mesh).material as THREE.MeshStandardMaterial;
+      if (m && "emissive" in m) {
+        m.emissive = new THREE.Color("#C8FF3D");
+        m.emissiveIntensity = 1.6;
+        m.toneMapped = false;
+      }
+    }
+
+    root.scale.setScalar(scale);
+    root.updateMatrixWorld(true);
+
+    const worldBox = new THREE.Box3().setFromObject(lights ?? root);
+    const lightsTopY = isFinite(worldBox.max.y) ? worldBox.max.y : BASE_RADIUS;
+    const metalWorldBox = new THREE.Box3().setFromObject(metal ?? root);
+    const baseY = isFinite(metalWorldBox.min.y) ? metalWorldBox.min.y : 0;
+
+    return { root, scale, lightsTopY: lightsTopY - baseY, baseY };
+  }, [scene]);
+}
+
+function Platform() {
+  const { root, baseY } = usePlatformLayout();
+  return <primitive object={root} position={[0, -baseY, 0]} />;
+}
+
+// ─── Hologram billboard ──────────────────────────────────────────────────────
+function HologramBillboard({ heightY }: { heightY: number }) {
+  const textures = useTexture(SLIDES) as THREE.Texture[];
+  const start = useRef(0);
+
+  useEffect(() => {
+    textures.forEach((t) => {
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.minFilter = THREE.LinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.anisotropy = 8;
+    });
+  }, [textures]);
+
+  const materials = useMemo(
     () =>
-      new THREE.LineBasicMaterial({
-        color: "#C8FF3D",
-        transparent: true,
-        opacity: 0.9,
-        blending: THREE.AdditiveBlending,
-        toneMapped: false,
-      }),
-    [],
+      textures.map(
+        () =>
+          new THREE.ShaderMaterial({
+            vertexShader: holoVS,
+            fragmentShader: holoFS,
+            transparent: true,
+            depthWrite: false,
+            toneMapped: false,
+            side: THREE.DoubleSide,
+            uniforms: {
+              uMap: { value: null as THREE.Texture | null },
+              uOpacity: { value: 0 },
+              uTime: { value: 0 },
+              uTint: { value: new THREE.Vector3(0.78, 1.0, 0.66) },
+            },
+          }),
+      ),
+    [textures],
   );
 
+  useEffect(() => {
+    materials.forEach((m, i) => {
+      m.uniforms.uMap.value = textures[i];
+    });
+  }, [materials, textures]);
+
   useFrame(({ clock }) => {
-    const g = ref.current;
-    if (!g) return;
-    g.visible = showRef.current;
-    if (!g.visible) return;
     const t = clock.elapsedTime;
-    g.rotation.y = Math.sin(t * 0.38) * 0.2 + 0.3;
-    g.rotation.z = Math.sin(t * 0.25) * 0.04 - 0.07;
-    g.position.y = 2.2 + Math.sin(t * 0.82) * 0.055;
+    if (start.current === 0) start.current = t;
+    const elapsed = t - start.current;
+    const phase = elapsed % CYCLE_S;
+    const slot = Math.floor(elapsed / CYCLE_S) % SLIDES.length;
+
+    const fIn = Math.min(1, phase / FADE_S);
+    const fOut = Math.min(1, (CYCLE_S - phase) / FADE_S);
+    const opacity = Math.max(0, Math.min(fIn, fOut));
+
+    materials.forEach((m, i) => {
+      m.uniforms.uTime.value = t;
+      m.uniforms.uOpacity.value = i === slot ? opacity : 0;
+    });
   });
 
   return (
-    <group ref={ref} position={[0, 2.2, 0]} scale={1.6}>
-      <lineLoop geometry={headGeo} material={mat} />
-      <lineSegments geometry={stringsGeo} material={mat} />
+    <group position={[0, heightY, 0]}>
+      {materials.map((mat, i) => (
+        <mesh key={SLIDES[i]} material={mat} position={[0, 0, i * 0.001]}>
+          <planeGeometry args={[1.0, 1.0]} />
+        </mesh>
+      ))}
     </group>
   );
 }
 
-// ─── Scene root ───────────────────────────────────────────────────────────────
-function Scene({ pr }: { pr: React.MutableRefObject<number> }) {
-  const showRacket = useRef(true);
-  useFrame(() => {
-    showRacket.current = pr.current < 0.38;
+// ─── Slow rotation rig ──────────────────────────────────────────────────────
+function Rig() {
+  const layout = usePlatformLayout();
+  const g = useRef<THREE.Group>(null);
+
+  useFrame(({ clock }) => {
+    if (!g.current) return;
+    const t = clock.elapsedTime;
+    g.current.rotation.y = Math.sin(t * 0.18) * 0.16;
+    g.current.position.y = Math.sin(t * 0.45) * 0.012;
   });
+
+  // Park the slide near the top of the platform's light cone (compact composition)
+  const slideY = layout.lightsTopY * 0.42 + 0.02;
+
+  return (
+    <group ref={g}>
+      <Platform />
+      <HologramBillboard heightY={slideY} />
+    </group>
+  );
+}
+
+function Scene() {
+  const { camera } = useThree();
+  useEffect(() => {
+    // Aim camera at the hologram column's mid-height so the platform
+    // reads as "on a table" and the light shoots up, not at us.
+    camera.lookAt(0, 0.55, 0);
+  }, [camera]);
 
   return (
     <>
-      {/* Sky/ground hemisphere — makes metallic Phong materials visible */}
-      <hemisphereLight args={["#5577aa", "#1a3322", 1.6]} />
-      <ambientLight intensity={0.4} />
-      <directionalLight position={[4, 8, 5]} intensity={2.2} color="#ffffff" />
-      <directionalLight position={[-3, 3, 4]} intensity={1.1} color="#88aaff" />
-      {/* Green rim light from below — cinematic */}
-      <pointLight position={[0, -0.5, 1]} intensity={3} color="#C8FF3D" distance={8} />
-      {/* Front fill */}
-      <pointLight position={[0, 2, 4]} intensity={1.5} color="#aabbcc" distance={12} />
-
-      <Platform />
-      <Lasers pr={pr} />
-      <Racket showRef={showRacket} />
-
-      {/* Green glow disc on ground */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.06, 0]}>
-        <circleGeometry args={[2.6, 64]} />
-        <meshBasicMaterial
-          color="#C8FF3D"
-          transparent
-          opacity={0.07}
-          blending={THREE.AdditiveBlending}
-          toneMapped={false}
-        />
-      </mesh>
+      <ambientLight intensity={0.45} />
+      <directionalLight position={[3, 4, 3]} intensity={1.3} color="#dfe8ff" />
+      <directionalLight position={[-3, 2, 1]} intensity={0.55} color="#C8FF3D" />
+      <pointLight position={[0, 0.5, 2]} intensity={1.2} color="#C8FF3D" distance={6} />
+      <Rig />
     </>
   );
 }
 
-// ─── Error boundary ───────────────────────────────────────────────────────────
 class ErrBound extends Component<
   { children: ReactNode; fallback: ReactNode },
   { err: boolean }
@@ -204,33 +248,35 @@ class ErrBound extends Component<
   static getDerivedStateFromError() {
     return { err: true };
   }
+  componentDidCatch(err: Error) {
+    if (process.env.NODE_ENV !== "production") console.error("[hologram]", err);
+  }
   render() {
     return this.state.err ? this.props.fallback : this.props.children;
   }
 }
 
-// ─── Export ───────────────────────────────────────────────────────────────────
-export function WhoWeAreScene({ pr }: { pr: React.MutableRefObject<number> }) {
+export function WhoWeAreScene() {
   return (
     <ErrBound fallback={null}>
       <Canvas
-        shadows={false}
-        dpr={[1, 1.5]}
-        // Camera is above-right of platform, looking down slightly
-        camera={{ position: [0, 1.35, 3.6], fov: 44, near: 0.1, far: 30 }}
+        dpr={[1, 1.75]}
+        camera={{ position: [0, 0.65, 4.0], fov: 26, near: 0.1, far: 25 }}
         gl={{
           antialias: true,
           alpha: true,
           powerPreference: "high-performance",
         }}
         className="h-full w-full"
+        style={{ background: "transparent" }}
       >
         <Suspense fallback={null}>
-          <Scene pr={pr} />
+          <Scene />
         </Suspense>
       </Canvas>
     </ErrBound>
   );
 }
 
-useGLTF.preload("/models/who-we-are-platform.glb");
+useGLTF.preload("/models/hologram-platform.glb");
+useTexture.preload(SLIDES);
