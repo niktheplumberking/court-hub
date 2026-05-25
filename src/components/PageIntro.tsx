@@ -105,6 +105,8 @@ export function PageIntro() {
         ready = true;
       } else {
         video.addEventListener("canplaythrough", markReady, { once: true });
+        video.addEventListener("loadeddata", markReady, { once: true });
+        video.addEventListener("error", markReady, { once: true });
       }
     } else {
       ready = true;
@@ -249,12 +251,21 @@ export function PageIntro() {
       gsap.set(["[data-intro-line]", "[data-intro-bracket]", "[data-intro-mark]",
                 "[data-intro-corner]", "[data-intro-tagline]", "[data-intro-progress-row]"],
         { opacity: 1, scaleX: 1, yPercent: 0, y: 0, scale: 1 });
+      const skipTimer = window.setTimeout(() => {
+        document.body.style.overflow = "";
+        setDone(true);
+      }, 600);
       return () => {
+        window.clearTimeout(skipTimer);
         window.clearTimeout(minTimer);
         window.clearTimeout(maxTimer);
         barTween.kill();
         gsap.ticker.remove(timeTick);
-        if (video) video.removeEventListener("canplaythrough", markReady);
+        if (video) {
+          video.removeEventListener("canplaythrough", markReady);
+          video.removeEventListener("loadeddata", markReady);
+          video.removeEventListener("error", markReady);
+        }
       };
     }
 
@@ -299,7 +310,11 @@ export function PageIntro() {
       window.clearTimeout(maxTimer);
       barTween.kill();
       gsap.ticker.remove(timeTick);
-      if (video) video.removeEventListener("canplaythrough", markReady);
+      if (video) {
+        video.removeEventListener("canplaythrough", markReady);
+        video.removeEventListener("loadeddata", markReady);
+        video.removeEventListener("error", markReady);
+      }
     };
   }, { dependencies: [prefersReduced] });
 

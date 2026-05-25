@@ -52,15 +52,6 @@ export function BroadcastGlass() {
         }}
       />
 
-      {/* Thin bezel frame — lime trace at ~10% opacity. */}
-      <div
-        className="absolute inset-4 rounded-[10px] border border-lime/[0.09] sm:inset-6 sm:rounded-[14px]"
-        style={{
-          boxShadow:
-            "0 0 0 1px rgba(255,255,255,0.04), inset 0 1px 0 rgba(255,255,255,0.06)",
-        }}
-      />
-
       {/* Ultra-light scan texture — motion-safe via prefers-reduced. */}
       {!prefersReduced && (
         <div

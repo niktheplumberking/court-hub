@@ -1,0 +1,11 @@
+Model Information:
+* title:	CARTRI Shield T90
+* source:	https://sketchfab.com/3d-models/cartri-shield-t90-3e26b4ec03a04e3f97497cd78e22b5fc
+* author:	pedrosvalero (https://sketchfab.com/pedrosvalero)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "CARTRI Shield T90" (https://sketchfab.com/3d-models/cartri-shield-t90-3e26b4ec03a04e3f97497cd78e22b5fc) by pedrosvalero (https://sketchfab.com/pedrosvalero) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

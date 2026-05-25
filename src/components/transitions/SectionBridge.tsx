@@ -66,7 +66,10 @@ function MarqueeProsBridge({ progress }: { progress: MotionValue<number> }) {
   const row = Array.from({ length: 10 });
 
   return (
-    <div className="absolute inset-0 flex flex-col items-stretch justify-center gap-6 bg-ink">
+    <div
+      className="absolute inset-0 flex flex-col items-stretch justify-center gap-6"
+      style={{ backgroundColor: "#060810" }}
+    >
       <motion.div
         style={{ x: x1 }}
         className="flex whitespace-nowrap font-display text-[14vw] leading-none text-white/10"

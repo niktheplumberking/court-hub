@@ -5,6 +5,7 @@ import { BroadcastGlass } from "@/components/BroadcastGlass";
 import { ScreenCrack } from "@/components/ScreenCrack";
 import { SmoothScroll } from "@/components/SmoothScroll";
 import { SectionBridge } from "@/components/transitions/SectionBridge";
+import { HorizontalWipe } from "@/components/transitions/HorizontalWipe";
 import { WhoWeAre } from "@/components/sections/WhoWeAre";
 import { Shop } from "@/components/sections/Shop";
 import { BuildACourt } from "@/components/sections/BuildACourt";
@@ -27,9 +28,13 @@ export default function Home() {
       <Hero />
       {/* No bridge after Hero — the lime → ink ball wipe IS the transition
           into WhoWeAre. One hero section, no second wordmark lockup. */}
-      <WhoWeAre />
-      <SectionBridge variant="marquee-pros" height="70vh" />
-      <Shop />
+      {/* WhoWeAre → Shop: horizontal wipe. Scrolling drives a side-by-side
+          track so section 2 exits left while section 3 enters from the right.
+          Falls back to a normal vertical stack on reduced-motion. */}
+      <HorizontalWipe>
+        <WhoWeAre />
+        <Shop />
+      </HorizontalWipe>
       <SectionBridge variant="blueprint" height="80vh" />
       <BuildACourt />
       <SectionBridge variant="stadium-lights" height="80vh" />
